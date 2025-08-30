@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic>=2.0
+numpy
+opencv-python
+soundfile
+librosa
+openai-whisper
+deepface
+python-multipart
+pytest
