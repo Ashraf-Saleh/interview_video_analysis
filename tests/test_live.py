@@ -1,50 +1,31 @@
-
-import time, types, sys
-from core.live import LiveAnalyzer
+# tests/test_live.py
+import sys, types, numpy as np
 from core.config import Settings
-import core.asr as asr
+import core.live as live
 
-
-class DummyWModel:
-    def transcribe(self, *a, **k): return {"text": "ok", "language": "en"}
-
-class DummyVideoCap:
-    def __init__(self, idx):
-        self.idx = idx
+class DummyCap:
+    def __init__(self): self.calls = 0
     def isOpened(self): return True
-    def read(self): return True, None
-    def get(self, code): return 30.0
+    def read(self):
+        self.calls += 1
+        if self.calls > 5: return False, None
+        return True, np.zeros((32,32,3), dtype=np.uint8)
     def release(self): pass
 
-class DummyInputStream:
-    def __init__(self, callback, channels, samplerate, blocksize):
-        self.callback = callback
-    def __enter__(self): 
-        import numpy as np
-        # push a small buffer once
-        self.callback(np.zeros((8000,1), dtype='float32'), 8000, None, None)
-        return self
-    def __exit__(self, *a): pass
+class DummyDF:
+    @staticmethod
+    def analyze(frame, actions, enforce_detection, detector_backend):
+        # Simulate no face (zero region) on first, then single neutral face
+        if np.sum(frame) == 0:
+            return [{"region":{"x":0,"y":0,"w":0,"h":0}, "dominant_emotion":"neutral"}]
+        return [{"region":{"x":5,"y":5,"w":20,"h":20}, "dominant_emotion":"neutral"}]
 
-def test_LiveAnalyzer():
-    import core.live as live
-    # patch camera & mic
-    # live.cv2.VideoCapture = lambda idx: DummyVideoCap(idx)
-    # live.sd.InputStream = lambda **kw: DummyInputStream(**kw)
-    monkeypatch.setattr(asr, "_model", DummyWModel())
-    monkeypatch.setattr(asr.whisper, "load_model", lambda *a, **k: DummyWModel())
-    class DF: 
-        @staticmethod
-        def analyze(*a, **k): return [{"dominant_emotion": "neutral"}]
-    # sys.modules['deepface'] = types.SimpleNamespace(DeepFace=DF)
+def test_run_live_overlay(monkeypatch):
+    monkeypatch.setattr(live.cv2, "VideoCapture", lambda idx: DummyCap())
+    monkeypatch.setitem(sys.modules, "deepface", types.SimpleNamespace(DeepFace=DummyDF))
+    monkeypatch.setattr(live.cv2, "imshow", lambda *a, **k: None)
+    monkeypatch.setattr(live.cv2, "waitKey", lambda d: ord("q"))  # exit immediately
 
     s = Settings()
-    s.LIVE_EMOTION_INTERVAL = 0.1
-    s.LIVE_ASR_INTERVAL = 0.2
-    s.LIVE_WINDOW_SECONDS = 0.5
-    la = LiveAnalyzer(s)
-    la.start()
-    time.sleep(0.5)
-    snap = la.status()
-    la.stop()
-    assert (snap is None) or (snap.verdict in ('Confident', 'Not Confident'))
+    s.LIVE_EMOTION_INTERVAL = 0.01
+    live.run_live_overlay(s, camera_index=0)

@@ -1,4 +1,5 @@
 
+# tests/test_live_overlay.py
 import sys, types
 import numpy as np
 from core.config import Settings
@@ -24,8 +25,11 @@ class DummyDF:
         return [{"region": {"x":8,"y":8,"w":10,"h":10}, "dominant_emotion": "neutral"}]
 
 def test_run_live_overlay_monkeypatch(monkeypatch):
+    # patch camera
     monkeypatch.setattr(live.cv2, 'VideoCapture', lambda idx: DummyCap())
+    # patch deepface
     monkeypatch.setitem(sys.modules, 'deepface', types.SimpleNamespace(DeepFace=DummyDF))
+    # patch GUI
     monkeypatch.setattr(live.cv2, 'imshow', lambda *a, **k: None)
     calls = {'n': 0}
     def fake_waitKey(delay):
