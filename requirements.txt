@@ -9,3 +9,5 @@ openai-whisper
 deepface
 python-multipart
 pytest
+sounddevice
+httpx>=0.24,<1.0

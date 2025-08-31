@@ -12,6 +12,11 @@ from core.pipeline import analyze_video_pipeline, analyze_audio_pipeline
 from core.live import LiveAnalyzer
 
 
+
+
+# app = FastAPI()
+live_session = {"running": False}
+
 router = APIRouter()
 
 @router.post("/analyze/video")
@@ -91,3 +96,51 @@ async def analyze_audio(
             audio_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+
+
+
+# @app.post("/analyze/audio")
+# async def analyze_audio(file: UploadFile = File(...)):
+#     with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+#         content = await file.read()
+#         tmp.write(content)
+#         tmp.flush()
+        
+#         try:
+#             result = analyze_audio_pipeline(tmp.name, {})
+#             return JSONResponse(result)
+#         finally:
+#             os.unlink(tmp.name)
+
+# @app.post("/analyze/video") 
+# async def analyze_video(file: UploadFile = File(...)):
+#     with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
+#         content = await file.read()
+#         tmp.write(content)
+#         tmp.flush()
+
+#         try:
+#             result = analyze_video_pipeline(tmp.name, {})
+#             return JSONResponse(result)
+#         finally:
+#             os.unlink(tmp.name)
+
+@router.post("/live/start")
+async def live_start():
+    if live_session["running"]:
+        return {"status": "already_running"}
+    live_session["running"] = True
+    return {"status": "started"}
+
+@router.get("/live/status")
+async def live_status():
+    return {"running": live_session["running"]}
+
+@router.post("/live/stop")
+async def live_stop():
+    if not live_session["running"]:
+        return {"status": "not_running"}
+    live_session["running"] = False
+    return {"status": "stopped"}

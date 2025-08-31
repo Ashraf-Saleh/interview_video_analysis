@@ -15,7 +15,7 @@ import soundfile as sf
 import librosa
 
 from core.config import Settings
-from core.asr import transcribe_audio
+# from core.asr import transcribe_audio
 from core.fluency import compute_fluency
 from core.confidence import infer_confidence
 from core.models import LiveSnapshot, LiveFluency, EmotionEntry, SilenceSpan
@@ -93,6 +93,7 @@ class LiveAnalyzer:
         cap.release()
 
     def _audio_loop(self):
+        from core.asr import transcribe_audio
         # collect audio continuously; do short chunks to ring buffer
         sr = self.s.AUDIO_SAMPLE_RATE
         chunk_sec = 0.5
@@ -179,3 +180,82 @@ class LiveAnalyzer:
                     )
                     next_asr_t = now + self.s.LIVE_ASR_INTERVAL
                 time.sleep(0.02)
+        # --- Live camera overlay (draw face window, emotion, and flags) ---
+    # Press 'q' to quit the window.
+    from core.config import Settings  # ensure this import is present somewhere in the file
+
+def run_live_overlay(settings: Settings, camera_index: int | None = None):
+    """
+    Open camera, detect faces/emotions, draw windows + flags in a live window.
+
+    - Draws 'NO_FACE' when no face is detected
+    - Draws 'MULTIPLE_FACES' when >1 face is detected
+    - Draws a rectangle + emotion label for a single face
+    Sampling period is controlled by settings.LIVE_EMOTION_INTERVAL (seconds).
+    """
+    import time
+    import cv2
+
+    cam_idx = settings.CAMERA_INDEX if camera_index is None else camera_index
+    cap = cv2.VideoCapture(cam_idx)
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open camera index {cam_idx}")
+
+    # Lazy import to avoid pulling TF when not used elsewhere
+    try:
+        from deepface import DeepFace
+    except Exception as e:
+        cap.release()
+        raise RuntimeError(
+            "DeepFace import failed. Ensure your deepface/tensorflow/keras versions are aligned."
+        ) from e
+
+    faces_cache = []
+    flag_cache = None
+    last_analyze_t = 0.0
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+        t = time.time()
+        if (t - last_analyze_t) >= max(0.1, settings.LIVE_EMOTION_INTERVAL):
+            try:
+                result = DeepFace.analyze(
+                    frame,
+                    actions=["emotion"],
+                    enforce_detection=False,
+                    detector_backend="opencv",
+                )
+                # normalize to list
+                if isinstance(result, dict):
+                    result = [result]
+                if len(result) == 0:
+                    flag_cache = "NO_FACE"
+                    faces_cache = []
+                elif len(result) > 1:
+                    flag_cache = "MULTIPLE_FACES"
+                    faces_cache = []
+                else:
+                    flag_cache = None
+                    faces_cache = [{
+                        "region": result[0].get("region") or {},
+                        "emotion": (result[0].get("dominant_emotion") or result[0].get("emotion") or "")
+                    }]
+            except Exception:
+                flag_cache = "NO_FACE"
+                faces_cache = []
+            last_analyze_t = t
+
+        # Draw overlays
+        from core.visual import draw_overlays  # local import to avoid cycles
+        annotated = draw_overlays(frame, faces_cache, flag_cache)
+        cv2.imshow("Interview Live", annotated)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()

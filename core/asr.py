@@ -17,13 +17,13 @@ def transcribe_audio(audio_path: str, settings: Settings) -> tuple[str, str]:
     """
     Transcribe audio with Whisper.
 
-    Args:
-        audio_path: Path to audio file.
-        settings: Runtime settings.
-
-    Returns:
-        (text, language_code)
+    - Uses device from Settings (cpu/cuda)
+    - Disables fp16 on CPU to avoid the 'FP16 is not supported on CPU' warning
     """
     model = _ensure_model(settings)
-    result = model.transcribe(audio_path)
+
+    use_fp16 = settings.DEVICE == "cuda"  # FP16 only makes sense on GPU
+    result = model.transcribe(audio_path, fp16=use_fp16)
+
     return result.get("text", ""), result.get("language", "en")
+
