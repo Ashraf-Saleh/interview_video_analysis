@@ -6,11 +6,15 @@ from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from fastapi import WebSocket, WebSocketDisconnect
+import logging
 
 from core.config import Settings
 from core.pipeline import analyze_video_pipeline, analyze_audio_pipeline
 from core.live import LiveAnalyzer
 
+import tempfile
+import shutil
+import os
 
 
 
@@ -18,6 +22,9 @@ from core.live import LiveAnalyzer
 live_session = {"running": False}
 
 router = APIRouter()
+settings = Settings()
+logger = logging.getLogger(__name__)
+
 
 @router.post("/analyze/video")
 async def analyze_video(
@@ -35,26 +42,36 @@ async def analyze_video(
     Returns:
         JSONResponse: Structured analysis payload.
     """
-    settings = Settings()
+    logger.debug(f"[api] /analyze/video filename={file.filename} emotion_interval={emotion_interval}")
     if emotion_interval is not None:
         settings.EMOTION_INTERVAL = float(emotion_interval)
 
-    tmp_dir = Path("temp")
-    tmp_dir.mkdir(exist_ok=True, parents=True)
-    vid_path = tmp_dir / f"{uuid.uuid4()}_{file.filename}"
-    with vid_path.open("wb") as f:
-        f.write(await file.read())
+    # Save to temp file
+    try:
+        suffix = os.path.splitext(file.filename or "")[1] or ".mp4"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+    except Exception as e:
+        logger.exception("[api] upload save failed")
+        raise HTTPException(status_code=400, detail=f"Upload failed: {e}")
 
     try:
-        payload = analyze_video_pipeline(str(vid_path), settings=settings)
+        logger.debug(f"[api] starting analyze_video_pipeline tmp_path={tmp_path}")
+        payload = analyze_video_pipeline(tmp_path, settings)
+        logger.debug("[api] analyze_video_pipeline completed")
         return JSONResponse(payload)
+    except FileNotFoundError as e:
+        logger.exception("[api] analyze_video_pipeline file not found")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("[api] analyze_video_pipeline failed")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         try:
-            vid_path.unlink(missing_ok=True)
+            os.unlink(tmp_path)
         except Exception:
-            pass
+            logger.warning(f"[api] failed to cleanup tmp file: {tmp_path}")
 
 @router.post("/analyze/audio")
 async def analyze_audio(
@@ -74,26 +91,21 @@ async def analyze_audio(
     Returns:
         JSONResponse: Structured analysis payload.
     """
-    settings = Settings()
-    if min_silence_dur is not None:
-        settings.MIN_SILENCE_DUR = float(min_silence_dur)
-    if silence_threshold is not None:
-        settings.SILENCE_THRESHOLD = float(silence_threshold)
-
-    tmp_dir = Path("temp")
-    tmp_dir.mkdir(exist_ok=True, parents=True)
-    audio_path = tmp_dir / f"{uuid.uuid4()}_{file.filename}"
-    with audio_path.open("wb") as f:
-        f.write(await file.read())
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Upload failed: {e}")
 
     try:
-        payload = analyze_audio_pipeline(str(audio_path), settings=settings)
+        payload = analyze_audio_pipeline(tmp_path, settings)
         return JSONResponse(payload)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         try:
-            audio_path.unlink(missing_ok=True)
+            os.unlink(tmp_path)
         except Exception:
             pass
 
